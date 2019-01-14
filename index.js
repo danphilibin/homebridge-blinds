@@ -87,7 +87,7 @@ function BlindsHTTPAccessory(log, config) {
             });
         }, {
             interval: this.pollingInterval,
-            longpolling: true,
+            longpolling: false,
             longpollEventName: "statuspoll"
         });
 
