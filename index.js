@@ -1,4 +1,5 @@
 var request = require("request");
+var pollingToEvent = require("polling-to-event");
 var Service, Characteristic;
 
 module.exports = function(homebridge) {
@@ -17,9 +18,11 @@ function BlindsHTTPAccessory(log, config) {
     this.upURL = config["up_url"];
     this.downURL = config["down_url"];
     this.stopURL = config["stop_url"];
+    this.statusURL = config["status_url"] || false;
     this.stopAtBoundaries = config["trigger_stop_at_boundaries"];
     this.httpMethod = config["http_method"] || "POST";
     this.motionTime = config["motion_time"];
+    this.pollingInterval = config["pollingInterval"] || 5000;
 
     // state vars
     this.interval = null;
@@ -27,6 +30,8 @@ function BlindsHTTPAccessory(log, config) {
     this.lastPosition = 0; // last known position of the blinds, down by default
     this.currentPositionState = 2; // stopped by default
     this.currentTargetPosition = 0; // down by default
+
+    var localThis = this;
 
     // register the service and provide the functions
     this.service = new Service.WindowCovering(this.name);
@@ -50,6 +55,64 @@ function BlindsHTTPAccessory(log, config) {
         .getCharacteristic(Characteristic.TargetPosition)
         .on('get', this.getTargetPosition.bind(this))
         .on('set', this.setTargetPosition.bind(this));
+
+    if (this.statusURL) {
+        var statusEmitter = pollingToEvent(function (done) {
+            localThis.httpRequest(localThis.statusURL, "GET", function (error, response) {
+                if (error) {
+                    
+                    // This plugin uses a 3000ms timeout interval. In most cases the response should be instant.
+                    // If a timeout error occurs, the blinds are probably currently opening or closing.
+                    // We can ignore that and wait for the next check.
+                    if ( 'ETIMEDOUT' === error.message ) {
+
+                        const moveUp = (localThis.currentTargetPosition >= localThis.lastPosition);
+                        localThis.service.setCharacteristic(Characteristic.PositionState, (moveUp ? 1 : 0));
+
+                        localThis.log("Blinds are %s", moveUp ? 'closing' : 'opening');
+
+                        return done(null);
+                    }
+                    
+                    localThis.log("HTTP get status function failed; %s", error.message);
+
+                    try {
+                        done(new Error("Network failure while checking blinds status."));
+                    } catch (err) {
+                        localThis.log(err.message);
+                    }
+                } else {
+                    done(null, JSON.parse(response));
+                }
+            });
+        }, {
+            interval: this.pollingInterval,
+            longpolling: true,
+            longpollEventName: "statuspoll"
+        });
+
+        statusEmitter.on("statuspoll", function (responseBody) {
+            if (!responseBody) {
+                return;
+            }
+
+            var pos;
+
+            if ('closed' === responseBody.status) {
+                pos = 100;
+            } else if ('open' === responseBody.status) {
+                pos = 0;
+            }
+
+            localThis.currentTargetPosition = pos;
+
+            localThis.log("Setting current position: %s", pos);
+
+            localThis.service.setCharacteristic(Characteristic.CurrentPosition, pos);
+            localThis.service.setCharacteristic(Characteristic.PositionState, 2);
+
+        });
+    }
 }
 
 BlindsHTTPAccessory.prototype.getCurrentPosition = function(callback) {
@@ -133,9 +196,10 @@ BlindsHTTPAccessory.prototype.httpRequest = function(url, method, callback) {
     request({
         method: method,
         url: url,
+        timeout: 3000
     }, function(err, response, body) {
         if (!err && response && response.statusCode == 200) {
-            callback(null);
+            callback(null, body);
         } else {
             this.log(
                 "Error getting state (status code %s): %s",
