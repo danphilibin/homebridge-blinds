@@ -91,7 +91,7 @@ function BlindsHTTPAccessory(log, config) {
             longpollEventName: "statuspoll"
         });
 
-        statusEmitter.on("statuspoll", function (responseBody) {
+        statusEmitter.on("poll", function (responseBody) {
             if (!responseBody) {
                 return;
             }
@@ -99,12 +99,16 @@ function BlindsHTTPAccessory(log, config) {
             var pos;
 
             if ('closed' === responseBody.status) {
-                pos = 100;
-            } else if ('open' === responseBody.status) {
                 pos = 0;
+            } else if ('open' === responseBody.status) {
+                pos = 100;
             }
 
-            localThis.currentTargetPosition = pos;
+            if ( localThis.lastPosition === pos ) {
+                return;
+            }
+
+            localThis.setPositionVars( pos, 2, pos );
 
             localThis.log("Setting current position: %s", pos);
 
@@ -113,6 +117,12 @@ function BlindsHTTPAccessory(log, config) {
 
         });
     }
+}
+
+BlindsHTTPAccessory.prototype.setPositionVars = function( currentTargetPosition, currentPositionState ) {
+    this.lastPosition = currentTargetPosition;
+    this.currentPositionState = currentPositionState;
+    this.currentTargetPosition = currentTargetPosition;
 }
 
 BlindsHTTPAccessory.prototype.getCurrentPosition = function(callback) {
