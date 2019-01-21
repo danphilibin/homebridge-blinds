@@ -98,9 +98,9 @@ function BlindsHTTPAccessory(log, config) {
 
             var pos;
 
-            if ('closed' === responseBody.status) {
+            if (0 === responseBody.position) {
                 pos = 0;
-            } else if ('open' === responseBody.status) {
+            } else if (7000 === responseBody.position) {
                 pos = 100;
             }
 
